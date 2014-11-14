@@ -54,7 +54,7 @@ local BYTE_MASK = 0x000000FF
 local WORD_MASK = 0xFFFFFFFF
 local MAX_NUMBER = 2^32
 local MAX_BUCKET_HOLES_RATIO = 100
-local NUM_BUCKETS = 2^20
+local NUM_BUCKETS = 2^16
 local WEAK_MT = { __mode="v" }
 
 -- the list of tuples is a hash table with a maximum of NUM_BUCKETS
@@ -131,6 +131,33 @@ local tuple_instance_mt = {
   end,
 }
 
+-- functions for the proxy metatable
+local newindex_function = function(self) error("Tuples are in-mutable data") end
+local len_function = function(self) return getmetatable(self)[3] end
+local tostring_function = function(self) return tostring(getmetatable(self)[2]) end
+local lt_function = function(self,other)
+  local t = getmetatable(self)[2]
+  if type(other) ~= "table" then return false
+  elseif #t < #other then return true
+  elseif #t > #other then return false
+  elseif t == other then return false
+  else
+    for i=1,#t do
+      if t[i] > other[i] then return false end
+    end
+    return true
+  end
+end
+local le_function = function(self,other)
+  local t = getmetatable(self)[2]
+  -- equality is comparing references (tuples are in-mutable and interned)
+  if self == other then return true end
+  return self < other
+end
+local pairs_function = function(self) return pairs(getmetatable(self)[2]) end
+local ipairs_function = function(self) return ipairs(getmetatable(self)[2]) end
+local concat_function = function(self,other) return getmetatable(self)[2] .. other end
+
 -- returns a wrapper table (proxy) which shades the data table, allowing
 -- in-mutability in Lua, it receives the table data and the number of elements
 local function proxy(tpl,n)
@@ -140,31 +167,14 @@ local function proxy(tpl,n)
       -- a string identifier, the real tuple data and the number of elements
       __metatable = { "is_tuple", tpl , n },
       __index = tpl,
-      __newindex = function(self) error("Tuples are in-mutable data") end,
-      __len = function(self) return getmetatable(self)[3] end,
-      __tostring = function(self) return tostring(getmetatable(self)[2]) end,
-      __lt = function(self,other)
-	local t = getmetatable(self)[2]
-	if type(other) ~= "table" then return false
-	elseif #t < #other then return true
-	elseif #t > #other then return false
-	elseif t == other then return false
-	else
-	  for i=1,#t do
-	    if t[i] > other[i] then return false end
-	  end
-	  return true
-	end
-      end,
-      __le = function(self,other)
-	local t = getmetatable(self)[2]
-	-- equality is comparing references (tuples are in-mutable and interned)
-	if self == other then return true end
-	return self < other
-      end,
-      __pairs = function(self) return pairs(getmetatable(self)[2]) end,
-      __ipairs = function(self) return ipairs(getmetatable(self)[2]) end,
-      __concat = function(self,other) return getmetatable(self)[2] .. other end,
+      __newindex = newindex_function,
+      __len = len_function,
+      __tostring = tostring_function,
+      __lt = lt_function,
+      __le = le_function,
+      __pairs = pairs_function,
+      __ipairs = ipairs_function,
+      __concat = concat_function,
       __mode = "v",
   })
 end
