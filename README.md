@@ -22,7 +22,7 @@ otherwise the tuple constructor will crash in a stack overflow.
 > tuple = require "tuple"
 > t1 = tuple(3,2,1)
 > print(t1)
-tuple( 3, 2, 1 )
+tuple{ 3, 2, 1 }
 > -- tuple from a table
 > t2 = tuple{3,2,1}
 > print(t1 == t2)
