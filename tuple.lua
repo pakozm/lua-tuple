@@ -23,8 +23,10 @@ local tuple = {
   _NAME = "tuple",
 }
 
+local MAX_BUCKET_HOLES_RATIO = 100
 local NUM_BUCKETS = 2^20
-local list_of_tuples = setmetatable({}, { __mode="v" })
+local WEAK_MT = { __mode="v" }
+local list_of_tuples = setmetatable({}, {}) -- WEAK_MT)
 
 local function dump_number(n)
   return string.format("%c%c%c%c%c%c%c%c",
@@ -45,6 +47,7 @@ local function compute_hash(t)
     local tt = type(v)
     if tt == "number" then v = dump_number(v)
     elseif tt == "table" then v = dump_number(compute_hash(v))
+    elseif tt == "nil" then v = "nil"
     end
     assert(type(v) == "string",
 	   "Needs an array with numbers, tables or strings")
@@ -63,10 +66,15 @@ local function compute_hash(t)
 end
 
 local tuple_instance_mt = {
+  __metatable = false,
   __newindex = function(self) error("Unable to modify a tuple") end,
   __tostring = function(self)
     local result = {}
-    for i=1,#self do result[#result+1] = tostring(self[i]) end
+    for i=1,#self do
+      local v = self[i]
+      if type(v) == "string" then v = string.format("%q",v) end
+      result[#result+1] = tostring(v)
+    end
     return table.concat({"tuple(",table.concat(result, ", "),")"}, " ")
   end,
   __concat = function(self,other)
@@ -81,16 +89,18 @@ local tuple_instance_mt = {
   end,
 }
 
-local function proxy(t)
-  setmetatable(t, tuple_instance_mt)
-  return setmetatable({},{
-      __newindex = function(self) error("Unable to modify a tuple") end,
-      __index = function(self,k) if k == "is_tuple" then return true end return t[k] end,
-      __len = function(self) return #t end,
-      __tostring = function(self) return tostring(t) end,
+local function proxy(tpl,n)
+  setmetatable(tpl, tuple_instance_mt)
+  return setmetatable({}, {
+      __metatable = { "is_tuple", tpl , n },
+      __index = tpl,
+      __newindex = function(self) error("Tuples are in-mutable data") end,
+      __len = function(self) return getmetatable(self)[3] end,
+      -- __tostring = function(self) return tostring(getmetatable(self)[2]) end,
       __lt = function(self,other)
+	local t = getmetatable(self)[2]
 	if type(other) ~= "table" then return false
-        elseif #t < #other then return true
+	elseif #t < #other then return true
 	elseif #t > #other then return false
 	elseif t == other then return false
 	else
@@ -101,49 +111,64 @@ local function proxy(t)
 	end
       end,
       __le = function(self,other)
+	local t = getmetatable(self)[2]
 	-- equality is comparing references (tuples are in-mutable and interned)
 	if self == other then return true end
 	return self < other
       end,
-      __pairs = function(self) return pairs(t) end,
-      __ipairs = function(self) return ipairs(t) end,
-      __concat = function(self,other) return t .. other end,
+      __pairs = function(self) return pairs(getmetatable(self)[2]) end,
+      __ipairs = function(self) return ipairs(getmetatable(self)[2]) end,
+      __concat = function(self,other) return getmetatable(self)[2] .. other end,
+      __mode = "v",
   })
 end
 
 local function tuple_constructor(t)
-  local h = 0
   local new_tuple = {}
-  for i,v in ipairs(t) do
-    if type(v) == "table" then
-      new_tuple[i] = tuple(v)
-    else
-      new_tuple[i] = v
+  for i,v in pairs(t) do
+    if i~="n" then
+      assert(type(i) == "number" and i>0, "Needs integer keys > 0")
+      if type(v) == "table" then
+	new_tuple[i] = tuple(v)
+      else
+	new_tuple[i] = v
+      end
     end
   end
-  return proxy(new_tuple)
+  return proxy(new_tuple,#t)
 end
 
 local tuple_mt = {
   -- tuple constructor doesn't allow table loops
   __call = function(self, ...)
-    local t = { ... } if #t == 1 then t = t[1] end
+    local n = select('#', ...)
+    local t = table.pack(...) assert(#t == n) if #t == 1 then t = t[1] end
     if type(t) ~= "table" then
       return t
     else
-      if t.is_tuple then return t end
+      local mt = getmetatable(t) if mt and mt[1]=="is_tuple" then return t end
       local new_tuple = tuple_constructor(t)
       local p = compute_hash(new_tuple) % NUM_BUCKETS
-      local bucket = (list_of_tuples[p] or setmetatable({}, { __mode="v" }))
+      local bucket = (list_of_tuples[p] or setmetatable({}, WEAK_MT))
       list_of_tuples[p] = bucket
-      for i,vi in ipairs(bucket) do
+      local max,n = 0,0
+      for i,vi in pairs(bucket) do
 	local equals = true
 	for j,vj in ipairs(vi) do
 	  if vj ~= new_tuple[j] then equals=false break end
 	end
 	if equals == true then return vi end
+	max = math.max(max,i)
+	n = n+1
       end
-      table.insert(bucket, new_tuple)
+      if max/n > MAX_BUCKET_HOLES_RATIO then
+	local new_bucket = {}
+	for i,vi in pairs(bucket) do new_bucket[#new_bucket+1] = vi end
+	list_of_tuples[p], bucket = new_bucket, new_bucket
+	max = #bucket
+	collectgarbage("collect")
+      end
+      bucket[max+1] = new_tuple
       return new_tuple
     end
   end,
@@ -161,6 +186,19 @@ tuple.utest = function()
   assert(a == c)
   assert(b == a[2])
   assert(b == c[2])
+end
+
+-- returns the number of tuples "alive", the number of used buckets, and the
+-- loading factor of the hash table
+tuple.stats = function()
+  local num_buckets = 0
+  local size = 0
+  for k1,v1 in pairs(list_of_tuples) do
+    num_buckets = num_buckets + 1
+    for k2,v2 in pairs(v1) do size=size+1 end
+  end
+  if num_buckets == 0 then num_buckets = 1 end
+  return size,num_buckets,size/NUM_BUCKETS
 end
 
 return tuple
