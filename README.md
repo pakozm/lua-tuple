@@ -23,12 +23,19 @@ otherwise the tuple constructor will crash in a stack overflow.
 > t1 = tuple(3,2,1)
 > print(t1)
 tuple( 3, 2, 1 )
-> t2 = tuple(3,2,1)
+> -- tuple from a table
+> t2 = tuple{3,2,1}
 > print(t1 == t2)
 true
+> -- tuples with one element are unpacked by default
+> print( tuple(3) )
+3
+> -- but it can be forced by using table constructor
+> print( tuple{3} )
+tuple{ 3 }
 > t3 = tuple(t1,{4,5,t1})
 > print(t3)
-tuple( tuple( 3, 2, 1 ), tuple( 4, 5, tuple( 3, 2, 1 ) ) )
+tuple{ tuple{ 3, 2, 1 }, tuple{ 4, 5, tuple{ 3, 2, 1 } } }
 > aux = { [t1] = "t1", [t3] = "t3" }
 > print(aux)
 table: 0x26fdc70
