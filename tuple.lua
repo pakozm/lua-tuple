@@ -30,17 +30,19 @@ local tuple = {
   _NAME = "tuple",
 }
 
--- the following hack is needed to allow unpack over tuples
-local table = require "table"
-local function table_unpack(t,i,n)
-  i = i or 1
-  n = n or #t
-  if i <= n then
-    return t[i], table_unpack(t, i + 1, n)
+if _VERSION ~= "Lua 5.3" then
+  -- the following hack is needed to allow unpack over tuples
+  local table = require "table"
+  local function table_unpack(t,i,n)
+    i = i or 1
+    n = n or #t
+    if i <= n then
+      return t[i], table_unpack(t, i + 1, n)
+    end
   end
+  table.unpack = table_unpack
+  unpack = table_unpack
 end
-table.unpack = table_unpack
-unpack = table_unpack
 
 -- libraries import
 local assert = assert
